@@ -11,6 +11,10 @@
   form { display: flex; gap: 8px; padding: 8px; background: #18181b; flex-wrap: wrap; align-items: center; }
   input { background: #0e0e10; color: inherit; border: 1px solid #3a3a3d; border-radius: 4px; padding: 6px 8px; }
   button { background: #9147ff; color: #fff; border: 0; border-radius: 4px; padding: 6px 14px; cursor: pointer; }
+  #collapse { margin-left: auto; background: #3a3a3d; }
+  body.collapsed form { display: none; }
+  #expand { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 3; padding: 2px 14px; border-radius: 0 0 6px 6px; opacity: .4; }
+  #expand:hover { opacity: 1; }
   main { flex: 1; display: flex; min-height: 0; position: relative; background: #0e0e10; }
   /* --chat is the chat's width when docked left/right and its height when docked bottom */
   main.dock-right, main.dock-overlay { flex-direction: row; }
@@ -57,7 +61,9 @@
   <button>Load</button>
   <!-- The player's own fullscreen only covers the video, so the overlay chat would vanish -->
   <button type="button" id="fullscreen">Fullscreen with chat</button>
+  <button type="button" id="collapse" title="Hide this bar" aria-label="Hide top bar">▲</button>
 </form>
+<button type="button" id="expand" title="Show the top bar" aria-label="Show top bar" hidden>▼</button>
 <main class="dock-right">
   <iframe id="player" allowfullscreen title="Twitch stream"></iframe>
   <div id="splitter" role="separator" aria-label="Resize chat"></div>
@@ -96,12 +102,23 @@
     ws.onclose = () => setTimeout(() => connectFeed(ch), 3000);
   }
 
-  // BetterTTV emotes (code -> image URL): global set now, the channel's set once a message tells us its Twitch ID.
-  const bttv = new Map();
-  let bttvRoom = null;
-  const loadBttv = (url, pick) => fetch(url).then(r => r.ok ? r.json() : null)
-    .then(d => d && pick(d).forEach(e => bttv.set(e.code, `https://cdn.betterttv.net/emote/${e.id}/1x`))).catch(() => {});
-  loadBttv('https://api.betterttv.net/3/cached/emotes/global', d => d);
+  // Third-party emotes (BTTV, FFZ, 7TV), code -> image URL: global sets now, the channel's sets once a message tells us its Twitch ID.
+  // pick turns each API's response into [code, url] pairs.
+  const extEmotes = new Map();
+  let emoteRoom = null;
+  const loadEmotes = (url, pick) => fetch(url).then(r => r.ok ? r.json() : null)
+    .then(d => d && pick(d).forEach(([code, src]) => extEmotes.set(code, src))).catch(() => {});
+  const bttvPairs = list => list.map(e => [e.code, `https://cdn.betterttv.net/emote/${e.id}/1x`]);
+  const ffzPairs = list => list.map(e => [e.code, e.images['1x']]);
+  const stvPairs = list => (list || []).map(e => [e.name, `https://cdn.7tv.app/emote/${e.id}/1x.webp`]);
+  loadEmotes('https://api.betterttv.net/3/cached/emotes/global', bttvPairs);
+  loadEmotes('https://api.betterttv.net/3/cached/frankerfacez/emotes/global', ffzPairs);
+  loadEmotes('https://7tv.io/v3/emote-sets/global', d => stvPairs(d.emotes));
+  function loadChannelEmotes(id) {
+    loadEmotes(`https://api.betterttv.net/3/cached/users/twitch/${id}`, d => bttvPairs([...d.channelEmotes, ...d.sharedEmotes]));
+    loadEmotes(`https://api.betterttv.net/3/cached/frankerfacez/users/twitch/${id}`, ffzPairs);
+    loadEmotes(`https://7tv.io/v3/users/twitch/${id}`, d => stvPairs(d.emote_set?.emotes));
+  }
 
   function emoteImg(div, src, alt) {
     const img = div.appendChild(document.createElement('img'));
@@ -109,9 +126,9 @@
     img.alt = alt;
   }
 
-  // Appends plain text, swapping whole words that are BTTV emote codes for images.
+  // Appends plain text, swapping whole words that are third-party emote codes for images.
   function appendText(div, text) {
-    for (const w of text.split(/(\s+)/)) bttv.has(w) ? emoteImg(div, bttv.get(w), w) : div.append(w);
+    for (const w of text.split(/(\s+)/)) extEmotes.has(w) ? emoteImg(div, extEmotes.get(w), w) : div.append(w);
   }
 
   // Renders one PRIVMSG line: "@tags :nick!nick@host PRIVMSG #ch :text". Built with DOM nodes, never innerHTML.
@@ -119,10 +136,7 @@
     const m = line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
     if (!m) return;
     const tags = Object.fromEntries(m[1].split(';').map(t => t.split('=')));
-    if (!bttvRoom && /^\d+$/.test(tags['room-id'])) {
-      bttvRoom = tags['room-id'];
-      loadBttv(`https://api.betterttv.net/3/cached/users/twitch/${bttvRoom}`, d => [...d.channelEmotes, ...d.sharedEmotes]);
-    }
+    if (!emoteRoom && /^\d+$/.test(tags['room-id'])) loadChannelEmotes(emoteRoom = tags['room-id']);
     const chars = Array.from(m[3]); // emote positions count code points, not UTF-16 units
     const emotes = []; // [start, end, id]
     for (const e of (tags.emotes || '').split('/').filter(Boolean)) {
@@ -239,6 +253,18 @@
   });
 
   document.getElementById('fullscreen').onclick = () => main.requestFullscreen();
+
+  // Collapsible top bar, remembered per browser.
+  const expand = document.getElementById('expand');
+  function setBar(collapsed) {
+    document.body.classList.toggle('collapsed', collapsed);
+    expand.hidden = !collapsed;
+    try { localStorage.setItem('barCollapsed', collapsed ? '1' : ''); } catch {}
+    apply(); // main just changed height, so re-clamp the floating chat
+  }
+  document.getElementById('collapse').onclick = () => setBar(true);
+  expand.onclick = () => setBar(false);
+  try { if (localStorage.getItem('barCollapsed')) setBar(true); } catch {}
   addEventListener('resize', apply);
   apply();
 </script>
