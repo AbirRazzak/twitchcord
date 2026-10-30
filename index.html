@@ -23,8 +23,14 @@
   #splitter:hover, body.dragging #splitter { background: #9147ff; }
   aside { flex: 0 0 var(--chat, 360px); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   /* Floating chat: position/size set from JS. #corner replaces CSS resize, whose handle sits under the iframe and can't be grabbed. */
-  main.dock-overlay aside { position: absolute; z-index: 1; overflow: hidden; opacity: .8; border-radius: 6px; box-shadow: 0 4px 20px #000a; }
-  main.dock-overlay aside:hover, body.dragging main.dock-overlay aside { opacity: 1; }
+  main.dock-overlay aside { position: absolute; z-index: 1; overflow: hidden; border-radius: 6px; }
+  /* Twitch's chat iframe can't be made transparent, so floating mode shows our own read-only #feed
+     and swaps the real chat back in on hover for typing. */
+  #feed { display: none; }
+  main.dock-overlay aside:not(:hover) #feed { display: flex; flex-direction: column; justify-content: flex-end; position: absolute; inset: 31px 0 0 0; padding: 6px 8px; overflow: hidden; pointer-events: none; font-weight: 600; line-height: 1.35; text-shadow: 0 0 3px #000, 1px 1px 2px #000; overflow-wrap: anywhere; }
+  main.dock-overlay aside:not(:hover) #twitchChat { visibility: hidden; }
+  main.dock-overlay aside:not(:hover) #grip { background: rgba(24, 24, 27, .5); }
+  #feed img { height: 1.5em; vertical-align: middle; }
   #grip { padding: 6px 10px; background: #18181b; cursor: grab; user-select: none; touch-action: none; color: #adadb8; }
   #twitchChat { flex: 1; border: 0; width: 100%; min-height: 0; }
   #corner { display: none; position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 50%, #9147ff 50%); }
@@ -36,7 +42,9 @@
   @media (max-width: 800px) {
     main { flex-direction: column !important; }
     #player { flex: none; aspect-ratio: 16 / 9; width: 100%; }
-    aside { flex: 1 !important; position: static !important; width: auto !important; height: auto !important; opacity: 1 !important; }
+    aside { flex: 1 !important; position: static !important; width: auto !important; height: auto !important; }
+    #feed { display: none !important; }
+    #twitchChat { visibility: visible !important; }
     #splitter, #grip, #fullscreen, #corner { display: none !important; }
   }
 </style>
@@ -54,6 +62,7 @@
   <aside>
     <div id="grip" title="Drag to an edge to dock, or onto the stream to float">⠿ Chat (drag to move)</div>
     <iframe id="twitchChat" title="Twitch chat"></iframe>
+    <div id="feed" aria-live="off"></div>
     <div id="corner" aria-label="Resize chat"></div>
   </aside>
   <div id="dropzone" hidden></div>
@@ -70,6 +79,50 @@
     const ch = encodeURIComponent(twitch.toLowerCase());
     document.getElementById('player').src = `https://player.twitch.tv/?channel=${ch}&parent=${host}`;
     document.getElementById('twitchChat').src = `https://www.twitch.tv/embed/${ch}/chat?parent=${host}&darkpopout`;
+    connectFeed(twitch.toLowerCase());
+  }
+
+  // Read-only chat for the transparent overlay, via Twitch IRC as an anonymous "justinfan" user.
+  const feed = document.getElementById('feed');
+  function connectFeed(ch) {
+    const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+    ws.onopen = () => ['CAP REQ :twitch.tv/tags', 'PASS x', 'NICK justinfan' + (Math.random() * 1e5 | 0), 'JOIN #' + ch].forEach(l => ws.send(l));
+    ws.onmessage = e => e.data.split('\r\n').forEach(line => {
+      if (line.startsWith('PING')) ws.send('PONG :tmi.twitch.tv');
+      else addMessage(line);
+    });
+    ws.onclose = () => setTimeout(() => connectFeed(ch), 3000);
+  }
+
+  // Renders one PRIVMSG line: "@tags :nick!nick@host PRIVMSG #ch :text". Built with DOM nodes, never innerHTML.
+  function addMessage(line) {
+    const m = line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
+    if (!m) return;
+    const tags = Object.fromEntries(m[1].split(';').map(t => t.split('=')));
+    const chars = Array.from(m[3]); // emote positions count code points, not UTF-16 units
+    const emotes = []; // [start, end, id]
+    for (const e of (tags.emotes || '').split('/').filter(Boolean)) {
+      const [id, spots] = e.split(':');
+      for (const s of spots.split(',')) { const [a, b] = s.split('-').map(Number); emotes.push([a, b, id]); }
+    }
+    emotes.sort((x, y) => x[0] - y[0]);
+
+    const div = document.createElement('div');
+    const name = div.appendChild(document.createElement('span'));
+    name.textContent = tags['display-name'] || m[2];
+    name.style.color = tags.color || '#bf94ff';
+    div.append(': ');
+    let i = 0;
+    for (const [a, b, id] of emotes) {
+      div.append(chars.slice(i, a).join(''));
+      const img = div.appendChild(document.createElement('img'));
+      img.src = `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(id)}/default/dark/1.0`;
+      img.alt = chars.slice(a, b + 1).join('');
+      i = b + 1;
+    }
+    div.append(chars.slice(i).join(''));
+    feed.append(div);
+    while (feed.childElementCount > 100) feed.firstElementChild.remove();
   }
 
   // Chat layout, remembered per browser. size = docked width/height; x/y/w/h = floating box.
