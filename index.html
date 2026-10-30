@@ -27,9 +27,11 @@
   /* Twitch's chat iframe can't be made transparent, so floating mode shows our own read-only #feed
      and swaps the real chat back in on hover for typing. */
   #feed { display: none; }
-  main.dock-overlay aside:not(:hover) #feed { display: flex; flex-direction: column; justify-content: flex-end; position: absolute; inset: 31px 0 0 0; padding: 6px 8px; overflow: hidden; pointer-events: none; font-weight: 600; line-height: 1.35; text-shadow: 0 0 3px #000, 1px 1px 2px #000; overflow-wrap: anywhere; }
+  main.dock-overlay aside:not(:hover) #feed { display: flex; flex-direction: column; justify-content: flex-end; position: absolute; inset: 0; padding: 6px 8px; overflow: hidden; pointer-events: none; font-weight: 600; line-height: 1.35; text-shadow: 0 0 3px #000, 1px 1px 2px #000; overflow-wrap: anywhere; }
   main.dock-overlay aside:not(:hover) #twitchChat { visibility: hidden; }
-  main.dock-overlay aside:not(:hover) #grip { background: rgba(24, 24, 27, .5); }
+  /* Floating drag bar and resize corner show on hover and fade out 1s after the mouse leaves */
+  main.dock-overlay #grip, main.dock-overlay #corner { opacity: 0; transition: opacity .3s 1s; }
+  main.dock-overlay aside:hover #grip, main.dock-overlay aside:hover #corner, body.dragging #grip, body.dragging #corner { opacity: 1; transition-delay: 0s; }
   #feed img { height: 1.5em; vertical-align: middle; }
   #grip { padding: 6px 10px; background: #18181b; cursor: grab; user-select: none; touch-action: none; color: #adadb8; }
   #twitchChat { flex: 1; border: 0; width: 100%; min-height: 0; }
@@ -152,13 +154,13 @@
     save();
   }
 
-  // Where a drop lands: near the left/right edge or bottom docks there, anywhere else floats over the stream.
+  // Where a drop lands: within EDGE px of the left/right/bottom edge docks there, anywhere else floats over the stream.
+  const EDGE = 48;
   function dockAt(x, y) {
     const r = main.getBoundingClientRect();
-    const fx = (x - r.left) / r.width, fy = (y - r.top) / r.height;
-    if (fx < 0.15) return 'left';
-    if (fx > 0.85) return 'right';
-    if (fy > 0.8) return 'bottom';
+    if (x - r.left < EDGE) return 'left';
+    if (r.right - x < EDGE) return 'right';
+    if (r.bottom - y < EDGE) return 'bottom';
     return 'overlay';
   }
 
