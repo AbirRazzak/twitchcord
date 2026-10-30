@@ -96,11 +96,33 @@
     ws.onclose = () => setTimeout(() => connectFeed(ch), 3000);
   }
 
+  // BetterTTV emotes (code -> image URL): global set now, the channel's set once a message tells us its Twitch ID.
+  const bttv = new Map();
+  let bttvRoom = null;
+  const loadBttv = (url, pick) => fetch(url).then(r => r.ok ? r.json() : null)
+    .then(d => d && pick(d).forEach(e => bttv.set(e.code, `https://cdn.betterttv.net/emote/${e.id}/1x`))).catch(() => {});
+  loadBttv('https://api.betterttv.net/3/cached/emotes/global', d => d);
+
+  function emoteImg(div, src, alt) {
+    const img = div.appendChild(document.createElement('img'));
+    img.src = src;
+    img.alt = alt;
+  }
+
+  // Appends plain text, swapping whole words that are BTTV emote codes for images.
+  function appendText(div, text) {
+    for (const w of text.split(/(\s+)/)) bttv.has(w) ? emoteImg(div, bttv.get(w), w) : div.append(w);
+  }
+
   // Renders one PRIVMSG line: "@tags :nick!nick@host PRIVMSG #ch :text". Built with DOM nodes, never innerHTML.
   function addMessage(line) {
     const m = line.match(/^@(\S+) :(\w+)!\S+ PRIVMSG #\S+ :(.*)$/);
     if (!m) return;
     const tags = Object.fromEntries(m[1].split(';').map(t => t.split('=')));
+    if (!bttvRoom && /^\d+$/.test(tags['room-id'])) {
+      bttvRoom = tags['room-id'];
+      loadBttv(`https://api.betterttv.net/3/cached/users/twitch/${bttvRoom}`, d => [...d.channelEmotes, ...d.sharedEmotes]);
+    }
     const chars = Array.from(m[3]); // emote positions count code points, not UTF-16 units
     const emotes = []; // [start, end, id]
     for (const e of (tags.emotes || '').split('/').filter(Boolean)) {
@@ -116,13 +138,11 @@
     div.append(': ');
     let i = 0;
     for (const [a, b, id] of emotes) {
-      div.append(chars.slice(i, a).join(''));
-      const img = div.appendChild(document.createElement('img'));
-      img.src = `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(id)}/default/dark/1.0`;
-      img.alt = chars.slice(a, b + 1).join('');
+      appendText(div, chars.slice(i, a).join(''));
+      emoteImg(div, `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(id)}/default/dark/1.0`, chars.slice(a, b + 1).join(''));
       i = b + 1;
     }
-    div.append(chars.slice(i).join(''));
+    appendText(div, chars.slice(i).join(''));
     feed.append(div);
     while (feed.childElementCount > 100) feed.firstElementChild.remove();
   }
