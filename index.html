@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Twitchcord</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0e0e10; color: #efeff1; font: 14px system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  form { display: flex; gap: 8px; padding: 8px; background: #18181b; flex-wrap: wrap; align-items: center; }
+  input { background: #0e0e10; color: inherit; border: 1px solid #3a3a3d; border-radius: 4px; padding: 6px 8px; }
+  button { background: #9147ff; color: #fff; border: 0; border-radius: 4px; padding: 6px 14px; cursor: pointer; }
+  main { flex: 1; display: flex; min-height: 0; position: relative; background: #0e0e10; }
+  /* --chat is the chat's width when docked left/right and its height when docked bottom */
+  main.dock-right, main.dock-overlay { flex-direction: row; }
+  main.dock-left { flex-direction: row-reverse; }
+  main.dock-bottom { flex-direction: column; }
+  #player { flex: 1; border: 0; min-width: 0; min-height: 0; }
+  #splitter { flex: 0 0 6px; background: #2a2a2d; cursor: col-resize; touch-action: none; }
+  main.dock-bottom #splitter { cursor: row-resize; }
+  main.dock-overlay #splitter { display: none; }
+  #splitter:hover, body.dragging #splitter { background: #9147ff; }
+  aside { flex: 0 0 var(--chat, 360px); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  /* Floating chat: position/size set from JS. #corner replaces CSS resize, whose handle sits under the iframe and can't be grabbed. */
+  main.dock-overlay aside { position: absolute; z-index: 1; overflow: hidden; opacity: .8; border-radius: 6px; box-shadow: 0 4px 20px #000a; }
+  main.dock-overlay aside:hover, body.dragging main.dock-overlay aside { opacity: 1; }
+  #grip { padding: 6px 10px; background: #18181b; cursor: grab; user-select: none; touch-action: none; color: #adadb8; }
+  #twitchChat { flex: 1; border: 0; width: 100%; min-height: 0; }
+  #corner { display: none; position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 50%, #9147ff 50%); }
+  main.dock-overlay #corner { display: block; }
+  /* iframes swallow pointer events, which would stop a drag mid-way */
+  body.dragging iframe { pointer-events: none; }
+  body.dragging, body.dragging #grip { cursor: grabbing; }
+  #dropzone { position: absolute; z-index: 2; background: rgba(145, 71, 255, .25); border: 2px dashed #9147ff; pointer-events: none; }
+  @media (max-width: 800px) {
+    main { flex-direction: column !important; }
+    #player { flex: none; aspect-ratio: 16 / 9; width: 100%; }
+    aside { flex: 1 !important; position: static !important; width: auto !important; height: auto !important; opacity: 1 !important; }
+    #splitter, #grip, #fullscreen, #corner { display: none !important; }
+  }
+</style>
+</head>
+<body>
+<form id="cfg">
+  <input name="twitch" placeholder="Twitch channel (e.g. caedrel)" aria-label="Twitch channel" required>
+  <button>Load</button>
+  <!-- The player's own fullscreen only covers the video, so the overlay chat would vanish -->
+  <button type="button" id="fullscreen">Fullscreen with chat</button>
+</form>
+<main class="dock-right">
+  <iframe id="player" allowfullscreen title="Twitch stream"></iframe>
+  <div id="splitter" role="separator" aria-label="Resize chat"></div>
+  <aside>
+    <div id="grip" title="Drag to an edge to dock, or onto the stream to float">⠿ Chat (drag to move)</div>
+    <iframe id="twitchChat" title="Twitch chat"></iframe>
+    <div id="corner" aria-label="Resize chat"></div>
+  </aside>
+  <div id="dropzone" hidden></div>
+</main>
+<script>
+  // Settings live in the URL so a setup can be bookmarked/shared.
+  const params = new URLSearchParams(location.search);
+  const form = document.getElementById('cfg');
+  form.twitch.value = params.get('twitch') || '';
+
+  const twitch = params.get('twitch');
+  const host = location.hostname; // Twitch embeds refuse to load unless parent matches the page's domain
+  if (twitch) {
+    const ch = encodeURIComponent(twitch.toLowerCase());
+    document.getElementById('player').src = `https://player.twitch.tv/?channel=${ch}&parent=${host}`;
+    document.getElementById('twitchChat').src = `https://www.twitch.tv/embed/${ch}/chat?parent=${host}&darkpopout`;
+  }
+
+  // Chat layout, remembered per browser. size = docked width/height; x/y/w/h = floating box.
+  const main = document.querySelector('main');
+  const aside = document.querySelector('aside');
+  const zone = document.getElementById('dropzone');
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
+  let layout = { dock: 'right', size: 360, x: null, y: 16, w: 340, h: 420 };
+  try { Object.assign(layout, JSON.parse(localStorage.getItem('layout'))); } catch {}
+  const save = () => { try { localStorage.setItem('layout', JSON.stringify(layout)); } catch {} };
+
+  function apply() {
+    const r = main.getBoundingClientRect();
+    main.className = 'dock-' + layout.dock;
+    if (layout.dock === 'overlay') {
+      layout.w = clamp(layout.w, 200, r.width);
+      layout.h = clamp(layout.h, 150, r.height);
+      layout.x = clamp(layout.x ?? r.width - layout.w - 16, 0, r.width - layout.w);
+      layout.y = clamp(layout.y, 0, r.height - layout.h);
+      Object.assign(aside.style, { left: layout.x + 'px', top: layout.y + 'px', width: layout.w + 'px', height: layout.h + 'px' });
+    } else {
+      aside.style.cssText = '';
+      const total = layout.dock === 'bottom' ? r.height : r.width;
+      layout.size = clamp(layout.size, 150, total - 150);
+      main.style.setProperty('--chat', layout.size + 'px');
+    }
+    save();
+  }
+
+  // Where a drop lands: near the left/right edge or bottom docks there, anywhere else floats over the stream.
+  function dockAt(x, y) {
+    const r = main.getBoundingClientRect();
+    const fx = (x - r.left) / r.width, fy = (y - r.top) / r.height;
+    if (fx < 0.15) return 'left';
+    if (fx > 0.85) return 'right';
+    if (fy > 0.8) return 'bottom';
+    return 'overlay';
+  }
+
+  // Starts a pointer drag on el; onMove gets each pointer event, onEnd the last one.
+  function drag(el, onMove, onEnd) {
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      document.body.classList.add('dragging');
+      const move = ev => onMove(ev);
+      const up = ev => {
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+        document.body.classList.remove('dragging');
+        onEnd?.(ev);
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+    });
+  }
+
+  drag(document.getElementById('splitter'), e => {
+    const r = main.getBoundingClientRect();
+    layout.size = { right: r.right - e.clientX, left: e.clientX - r.left, bottom: r.bottom - e.clientY }[layout.dock];
+    apply();
+  });
+
+  // Floating box is placed with the pointer near the middle of its title bar.
+  const floatPos = (e, r) => ({ x: e.clientX - r.left - layout.w / 2, y: e.clientY - r.top - 12 });
+
+  drag(document.getElementById('grip'), e => {
+    const d = dockAt(e.clientX, e.clientY), r = main.getBoundingClientRect();
+    if (d === 'overlay') {
+      const p = floatPos(e, r);
+      zone.style.cssText = `left:${p.x}px;top:${p.y}px;width:${layout.w}px;height:${layout.h}px`;
+    } else {
+      zone.style.cssText = { left: 'left:0;top:0;bottom:0;width:30%', right: 'right:0;top:0;bottom:0;width:30%', bottom: 'left:0;right:0;bottom:0;height:40%' }[d];
+    }
+    zone.hidden = false;
+  }, e => {
+    if (zone.hidden) return; // a click without dragging
+    zone.hidden = true;
+    const d = dockAt(e.clientX, e.clientY);
+    if (d === 'overlay') Object.assign(layout, { dock: d }, floatPos(e, main.getBoundingClientRect()));
+    else if (d !== layout.dock) Object.assign(layout, { dock: d, size: d === 'bottom' ? 300 : 360 });
+    apply();
+  });
+
+  drag(document.getElementById('corner'), e => {
+    const r = aside.getBoundingClientRect();
+    layout.w = e.clientX - r.left;
+    layout.h = e.clientY - r.top;
+    apply();
+  });
+
+  document.getElementById('fullscreen').onclick = () => main.requestFullscreen();
+  addEventListener('resize', apply);
+  apply();
+</script>
+</body>
+</html>
