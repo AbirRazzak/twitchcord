@@ -8,8 +8,10 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #0e0e10; color: #efeff1; font: 14px system-ui, sans-serif; }
   body { display: flex; flex-direction: column; }
-  #fullscreen { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 3; padding: 2px 14px; border: 0; border-radius: 0 0 6px 6px; background: #9147ff; color: #fff; cursor: pointer; opacity: .4; }
-  #fullscreen:hover { opacity: 1; }
+  #tabs { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 2px; opacity: .4; }
+  #tabs:hover { opacity: 1; }
+  #tabs button { padding: 2px 14px; border: 0; border-radius: 0 0 6px 6px; background: #9147ff; color: #fff; cursor: pointer; }
+  body.chat-hidden aside, body.chat-hidden #splitter { display: none !important; }
   main { flex: 1; display: flex; min-height: 0; position: relative; background: #0e0e10; }
   /* --chat is the chat's width when docked left/right and its height when docked bottom */
   main.dock-right, main.dock-overlay { flex-direction: row; }
@@ -52,7 +54,10 @@
 </head>
 <body>
 <!-- The player's own fullscreen only covers the video, so the overlay chat would vanish -->
-<button type="button" id="fullscreen" title="Fullscreen with chat" aria-label="Fullscreen with chat">⛶</button>
+<div id="tabs">
+  <button type="button" id="fullscreen" title="Fullscreen with chat" aria-label="Fullscreen with chat">⛶</button>
+  <button type="button" id="togglechat" title="Hide chat" aria-label="Hide chat" aria-pressed="false">💬</button>
+</div>
 <main class="dock-right">
   <iframe id="player" allowfullscreen title="Twitch stream"></iframe>
   <div id="splitter" role="separator" aria-label="Resize chat"></div>
@@ -240,6 +245,19 @@
   });
 
   document.getElementById('fullscreen').onclick = () => main.requestFullscreen();
+
+  // Hide/show chat; remembered with the rest of the layout.
+  const chatBtn = document.getElementById('togglechat');
+  function setChat(hidden) {
+    document.body.classList.toggle('chat-hidden', hidden);
+    chatBtn.title = hidden ? 'Show chat' : 'Hide chat';
+    chatBtn.setAttribute('aria-label', chatBtn.title);
+    chatBtn.setAttribute('aria-pressed', hidden);
+    layout.chatHidden = hidden;
+    save();
+  }
+  chatBtn.onclick = () => setChat(!layout.chatHidden);
+  setChat(!!layout.chatHidden);
   addEventListener('resize', apply);
   apply();
 </script>
