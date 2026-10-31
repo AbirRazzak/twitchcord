@@ -8,13 +8,8 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #0e0e10; color: #efeff1; font: 14px system-ui, sans-serif; }
   body { display: flex; flex-direction: column; }
-  form { display: flex; gap: 8px; padding: 8px; background: #18181b; flex-wrap: wrap; align-items: center; }
-  input { background: #0e0e10; color: inherit; border: 1px solid #3a3a3d; border-radius: 4px; padding: 6px 8px; }
-  button { background: #9147ff; color: #fff; border: 0; border-radius: 4px; padding: 6px 14px; cursor: pointer; }
-  #collapse { margin-left: auto; background: #3a3a3d; }
-  body.collapsed form { display: none; }
-  #expand { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 3; padding: 2px 14px; border-radius: 0 0 6px 6px; opacity: .4; }
-  #expand:hover { opacity: 1; }
+  #fullscreen { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 3; padding: 2px 14px; border: 0; border-radius: 0 0 6px 6px; background: #9147ff; color: #fff; cursor: pointer; opacity: .4; }
+  #fullscreen:hover { opacity: 1; }
   main { flex: 1; display: flex; min-height: 0; position: relative; background: #0e0e10; }
   /* --chat is the chat's width when docked left/right and its height when docked bottom */
   main.dock-right, main.dock-overlay { flex-direction: row; }
@@ -56,14 +51,8 @@
 </style>
 </head>
 <body>
-<form id="cfg">
-  <input name="twitch" placeholder="Twitch channel (e.g. caedrel)" aria-label="Twitch channel" required>
-  <button>Load</button>
-  <!-- The player's own fullscreen only covers the video, so the overlay chat would vanish -->
-  <button type="button" id="fullscreen">Fullscreen with chat</button>
-  <button type="button" id="collapse" title="Hide this bar" aria-label="Hide top bar">▲</button>
-</form>
-<button type="button" id="expand" title="Show the top bar" aria-label="Show top bar" hidden>▼</button>
+<!-- The player's own fullscreen only covers the video, so the overlay chat would vanish -->
+<button type="button" id="fullscreen" title="Fullscreen with chat" aria-label="Fullscreen with chat">⛶</button>
 <main class="dock-right">
   <iframe id="player" allowfullscreen title="Twitch stream"></iframe>
   <div id="splitter" role="separator" aria-label="Resize chat"></div>
@@ -76,18 +65,16 @@
   <div id="dropzone" hidden></div>
 </main>
 <script>
-  // Settings live in the URL so a setup can be bookmarked/shared.
-  const params = new URLSearchParams(location.search);
-  const form = document.getElementById('cfg');
-  form.twitch.value = params.get('twitch') || '';
-
-  const twitch = params.get('twitch');
+  // The channel comes from the URL: ?twitch=channelname
+  const twitch = new URLSearchParams(location.search).get('twitch');
   const host = location.hostname; // Twitch embeds refuse to load unless parent matches the page's domain
   if (twitch) {
     const ch = encodeURIComponent(twitch.toLowerCase());
     document.getElementById('player').src = `https://player.twitch.tv/?channel=${ch}&parent=${host}`;
     document.getElementById('twitchChat').src = `https://www.twitch.tv/embed/${ch}/chat?parent=${host}&darkpopout`;
     connectFeed(twitch.toLowerCase());
+  } else {
+    document.getElementById('player').srcdoc = '<body style="margin:0;height:100vh;display:grid;place-items:center;background:#0e0e10;color:#adadb8;font:16px system-ui">Add ?twitch=channelname to the URL</body>';
   }
 
   // Read-only chat for the transparent overlay, via Twitch IRC as an anonymous "justinfan" user.
@@ -253,18 +240,6 @@
   });
 
   document.getElementById('fullscreen').onclick = () => main.requestFullscreen();
-
-  // Collapsible top bar, remembered per browser.
-  const expand = document.getElementById('expand');
-  function setBar(collapsed) {
-    document.body.classList.toggle('collapsed', collapsed);
-    expand.hidden = !collapsed;
-    try { localStorage.setItem('barCollapsed', collapsed ? '1' : ''); } catch {}
-    apply(); // main just changed height, so re-clamp the floating chat
-  }
-  document.getElementById('collapse').onclick = () => setBar(true);
-  expand.onclick = () => setBar(false);
-  try { if (localStorage.getItem('barCollapsed')) setBar(true); } catch {}
   addEventListener('resize', apply);
   apply();
 </script>
