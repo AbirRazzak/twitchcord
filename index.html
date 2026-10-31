@@ -8,8 +8,10 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #0e0e10; color: #efeff1; font: 14px system-ui, sans-serif; }
   body { display: flex; flex-direction: column; }
-  #tabs { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 2px; opacity: .4; }
-  #tabs:hover { opacity: 1; }
+  /* Hidden until hovered; the padding is an invisible hover area so the tiny tabs are easy to find. Fades 1s after leaving. */
+  #tabs { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 2px; padding: 0 40px 24px; opacity: 0; transition: opacity .3s 1s; }
+  #tabs:hover, #tabs:focus-within { opacity: 1; transition-delay: 0s; }
+  #tabs button { align-self: flex-start; }
   #tabs button { padding: 2px 14px; border: 0; border-radius: 0 0 6px 6px; background: #9147ff; color: #fff; cursor: pointer; }
   body.chat-hidden aside, body.chat-hidden #splitter { display: none !important; }
   main { flex: 1; display: flex; min-height: 0; position: relative; background: #0e0e10; }
