@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Twitchcord</title>
+<title>TwitchTV</title>
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #0e0e10; color: #efeff1; font: 14px system-ui, sans-serif; }
@@ -76,6 +76,7 @@
   const twitch = new URLSearchParams(location.search).get('twitch');
   const host = location.hostname; // Twitch embeds refuse to load unless parent matches the page's domain
   if (twitch) {
+    document.title = twitch;
     const ch = encodeURIComponent(twitch.toLowerCase());
     document.getElementById('player').src = `https://player.twitch.tv/?channel=${ch}&parent=${host}`;
     document.getElementById('twitchChat').src = `https://www.twitch.tv/embed/${ch}/chat?parent=${host}&darkpopout`;
@@ -96,15 +97,15 @@
     ws.onclose = () => setTimeout(() => connectFeed(ch), 3000);
   }
 
-  // Third-party emotes (BTTV, FFZ, 7TV), code -> image URL: global sets now, the channel's sets once a message tells us its Twitch ID.
-  // pick turns each API's response into [code, url] pairs.
+  // Third-party emotes (BTTV, FFZ, 7TV), code -> [1x url, 2x url]: global sets now, the channel's sets once a message tells us its Twitch ID.
+  // pick turns each API's response into [code, 1x url, 2x url] entries.
   const extEmotes = new Map();
   let emoteRoom = null;
   const loadEmotes = (url, pick) => fetch(url).then(r => r.ok ? r.json() : null)
-    .then(d => d && pick(d).forEach(([code, src]) => extEmotes.set(code, src))).catch(() => {});
-  const bttvPairs = list => list.map(e => [e.code, `https://cdn.betterttv.net/emote/${e.id}/1x`]);
-  const ffzPairs = list => list.map(e => [e.code, e.images['1x']]);
-  const stvPairs = list => (list || []).map(e => [e.name, `https://cdn.7tv.app/emote/${e.id}/1x.webp`]);
+    .then(d => d && pick(d).forEach(([code, ...srcs]) => extEmotes.set(code, srcs))).catch(() => {});
+  const bttvPairs = list => list.map(e => [e.code, `https://cdn.betterttv.net/emote/${e.id}/1x`, `https://cdn.betterttv.net/emote/${e.id}/2x`]);
+  const ffzPairs = list => list.map(e => [e.code, e.images['1x'], e.images['2x']]);
+  const stvPairs = list => (list || []).map(e => [e.name, `https://cdn.7tv.app/emote/${e.id}/1x.webp`, `https://cdn.7tv.app/emote/${e.id}/2x.webp`]);
   loadEmotes('https://api.betterttv.net/3/cached/emotes/global', bttvPairs);
   loadEmotes('https://api.betterttv.net/3/cached/frankerfacez/emotes/global', ffzPairs);
   loadEmotes('https://7tv.io/v3/emote-sets/global', d => stvPairs(d.emotes));
@@ -114,9 +115,11 @@
     loadEmotes(`https://7tv.io/v3/users/twitch/${id}`, d => stvPairs(d.emote_set?.emotes));
   }
 
-  function emoteImg(div, src, alt) {
+  // src2x (when the source has one) lets high-DPI screens pick the sharper image.
+  function emoteImg(div, [src, src2x], alt) {
     const img = div.appendChild(document.createElement('img'));
     img.src = src;
+    if (src2x) img.srcset = `${src2x} 2x`;
     img.alt = alt;
   }
 
@@ -147,7 +150,8 @@
     let i = 0;
     for (const [a, b, id] of emotes) {
       appendText(div, chars.slice(i, a).join(''));
-      emoteImg(div, `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(id)}/default/dark/1.0`, chars.slice(a, b + 1).join(''));
+      const base = `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(id)}/default/dark/`;
+      emoteImg(div, [base + '1.0', base + '2.0'], chars.slice(a, b + 1).join(''));
       i = b + 1;
     }
     appendText(div, chars.slice(i).join(''));
@@ -259,6 +263,14 @@
     save();
   }
   chatBtn.onclick = () => setChat(!layout.chatHidden);
+
+  // Shortcuts: F = fullscreen with chat (toggle), C = hide/show chat. Ctrl/Cmd/Alt combos (e.g. Ctrl+F) are left alone.
+  addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    const k = e.key.toLowerCase();
+    if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : main.requestFullscreen();
+    else if (k === 'c') setChat(!layout.chatHidden);
+  });
   setChat(!!layout.chatHidden);
   addEventListener('resize', apply);
   apply();
